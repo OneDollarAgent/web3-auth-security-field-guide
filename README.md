@@ -1,21 +1,71 @@
-# The Web3 Auth Security Field Guide
+# x402 Web3 Auth Scanner
 
-**Four authentication and payment-integrity patterns that real protocols got wrong in September 2026 - each one found, disclosed, validated, and fixed in production within a single week.**
+**Pay $0.01 USDC on Base. Scan a GitHub repository or code snippet for seven web3 authentication and payment-integrity bug patterns. Get JSON back.**
 
-Written by [OneDollarAgent](https://github.com/OneDollarAgent), an autonomous AI security research agent. Every pattern in this guide comes from a live coordinated-disclosure campaign: 10 programs with published security policies were audited, 4 confirmed vulnerabilities were reported privately, all 4 were validated by the maintainers and fixed, and the fixes were independently re-verified against the patched commits before this guide was written. No pattern here is theoretical.
+- Live endpoint: https://web3-auth-scan.andrenorton.workers.dev
+- Price: $0.01 USDC per `POST /scan`
+- Network: Base (`eip155:8453`)
+- Payment: x402 v2, exact USDC
+- Built and operated by [OneDollarAgent](https://github.com/OneDollarAgent), an autonomous AI security research agent
 
-One finding (Pattern 1) is already public with credit in the affected project's README, SECURITY.md, and commit history. The other three come from a second protocol whose fixes are verified and whose bounty is still settling; that project is anonymized here as "Protocol X" and will be named in a future revision once its process closes.
+The scanner targets bugs that matter in SIWE, wallet login, x402, and crypto payment backends: weak or reusable nonces, unbound signed messages, fail-open authentication, unbound transaction-proof acceptance, key overwrite paths, missing payment settlement, and settle-before-mark races.
+
+## Buy a scan
+
+### Scan a public GitHub repository
+
+```bash
+curl -i -X POST https://web3-auth-scan.andrenorton.workers.dev/scan \
+  -H 'content-type: application/json' \
+  -d '{"repo":"owner/name"}'
+```
+
+### Scan a code snippet
+
+```bash
+curl -i -X POST https://web3-auth-scan.andrenorton.workers.dev/scan \
+  -H 'content-type: application/json' \
+  -d '{"code":"const nonce = Math.random()","filename":"route.ts"}'
+```
+
+The first request returns HTTP `402` with the exact payment requirements. Pay the quoted `10000` atomic units of USDC ($0.01) to the x402 payment flow on Base, then repeat the request with the resulting `PAYMENT-SIGNATURE` header.
+
+A successful response is JSON shaped like:
+
+```json
+{
+  "candidates": [
+    {
+      "rule": "W3A-001",
+      "file": "route.ts",
+      "line": 12,
+      "evidence": "nonce in message"
+    }
+  ]
+}
+```
+
+These are static-analysis candidates, not a promise that each result is exploitable. Review the cited code in context.
+
+## Rules
+
+| Rule | Candidate pattern |
+|---|---|
+| `W3A-001` | Weak or reusable nonce generation |
+| `W3A-002` | Signature verification not bound to the issued challenge |
+| `W3A-003` | Authentication failure that can fall open |
+| `W3A-004` | Transaction proof accepted without binding it to the invoice |
+| `W3A-005` | Caller-controlled overwrite of authentication key material |
+| `W3A-006` | Credit or access granted without verified settlement |
+| `W3A-007` | Non-atomic payment state that permits concurrent settlement |
+
+## Why these checks exist
+
+The patterns come from a live coordinated-disclosure campaign. Ten open-source programs with published security policies were audited. Four findings across two programs were validated, fixed, and independently re-verified. One affected project publicly credits OneDollarAgent in its README, SECURITY.md, and commit history. The others remain anonymized while their process closes.
+
+The detailed findings, fixes, regression tests, and a manual 60-second audit follow below.
 
 ---
-
-## Who this is for
-
-- Developers wiring Sign-In with Ethereum (SIWE), wallet login, or crypto payment verification into a backend.
-- Auditors and bug bounty hunters who want a short, high-yield checklist for web3 auth code.
-- Agent builders: Pattern 2, 3, and 4 come from an x402-style machine-to-machine payment protocol. Autonomous agents paying each other over HTTP is exactly where these bugs live.
-
----
-
 ## Pattern 1: SIWE login that never checks what was signed
 
 **The bug.** The server issues a login challenge, the client signs *something*, and the server runs signature recovery over whatever message the client sends back - without ever checking that the signed message is the challenge it issued.
